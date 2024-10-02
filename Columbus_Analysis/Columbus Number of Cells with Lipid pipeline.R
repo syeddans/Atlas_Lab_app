@@ -18,7 +18,7 @@ files = list.files(path, pattern=NULL, all.files=FALSE,
 
 # Map the chemical to its well (moved to be processed first so program can crash rigth away if there is problem instead of waiting processing and wasting time)
 wellMapFileName = paste0(AnalysisName, "-wellmap.csv") #wellmap file name should come in as analysis file name + -wellmap
-wellMap <- read.csv(paste0("~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC-wellmap", "/", wellMapFileName),sep =",", header = FALSE, row.names = 1)#read.csv(paste0(wellmap_dir, "/", wellMapFileName),sep =",", header = FALSE, row.names = 1) 
+wellMap <- read.csv(paste0(wellmap_dir, "/", wellMapFileName),sep =",", header = FALSE, row.names = 1) #read.csv(paste0("~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC-wellmap", "/", wellMapFileName),sep =",", header = FALSE, row.names = 1)
 colnames(wellMap) <- wellMap[1, ]
 wellMap <- wellMap[-1, ]
 combinations <- character()
@@ -41,7 +41,7 @@ generate_cellID <- function(length = 8) {
   paste0(sample(c(0:9, letters, LETTERS), length, replace = TRUE), collapse = "")
 }
 
-# first tried the above function in R but was too slow, so opted to use c++ code for faster processing of euclidean distance which is a pairwise calculation
+# first tried the above function in R but was too slow when using lapply, so opted to use c++ code for faster processing of euclidean distance which is a pairwise calculation
 euclidean_distance <- function(x1, y1, x2, y2) {
   sqrt((x2 - x1)^2 + (y2 - y1)^2)
 }

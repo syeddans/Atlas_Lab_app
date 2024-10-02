@@ -10,8 +10,8 @@ bodipyColumbusAnalysisUI <- function() {
              actionButton("temp_data_submit", "Submit Temp Data"),
            ), # sidebarPanel
            mainPanel(
-             uiOutput("tables"),
-             downloadButton("downloadData", "Download Processed Data")
+             uiOutput("tables")
+             
            ) # mainPanel
            
   )
