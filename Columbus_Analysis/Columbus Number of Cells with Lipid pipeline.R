@@ -10,7 +10,7 @@ library("Rcpp")
 library("matrixStats")
 library(parallel)
 
-path = Columbus_files_dir#"~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC" #"~/storage/Atlas_lab_app/3d_testdata/3d_test_data/2024-04-03 liver spheroids BODIPY lean vs Tox"
+path = Columbus_files_dir #"~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC" #"~/storage/Atlas_lab_app/3d_testdata/3d_test_data/2024-04-03 liver spheroids BODIPY lean vs Tox"
 AnalysisName = basename(path) 
 path2 = paste0(path,"/")
 files = list.files(path, pattern=NULL, all.files=FALSE, 
@@ -18,10 +18,13 @@ files = list.files(path, pattern=NULL, all.files=FALSE,
 
 # Map the chemical to its well (moved to be processed first so program can crash rigth away if there is problem instead of waiting processing and wasting time)
 wellMapFileName = paste0(AnalysisName, "-wellmap.csv") #wellmap file name should come in as analysis file name + -wellmap
-wellMap <- read.csv(paste0(wellmap_dir, "/", wellMapFileName),sep =",", header = FALSE, row.names = 1) #read.csv(paste0("~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC-wellmap", "/", wellMapFileName),sep =",", header = FALSE, row.names = 1)
+#TODO: add error catching: if it says "row.names cannot be duplicated" it likely means the user forgot to fill out the wellmap headers fully like forgetting P or 12. 
+wellMap <- read.csv(paste0(wellmap_dir, "/", wellMapFileName),sep =",", header = FALSE, row.names = 1)#read.csv(paste0("~/storage/Atlas_lab_app/2023-10-10 BODIPY 3T3L1 bisphenols cellmask rep1-p2-june19-JC-wellmap", "/", wellMapFileName),sep =",", header = FALSE, row.names = 1)
+
 colnames(wellMap) <- wellMap[1, ]
 wellMap <- wellMap[-1, ]
 combinations <- character()
+
 for (row in rownames(wellMap)) {
   for (col in colnames(wellMap)) {
     combinations <- c(combinations, paste0(row, col))
@@ -36,6 +39,11 @@ for (row in seq_along(rownames(wellMap))) {
   }
 }
 lookup$chemical <- chemical
+
+#remove NA rows so that we do not need to process them later if they are not indicated in the wellmap
+lookup[lookup == "NA"] <- NA
+lookup <- na.omit(lookup)
+
 
 generate_cellID <- function(length = 8) {
   paste0(sample(c(0:9, letters, LETTERS), length, replace = TRUE), collapse = "")
@@ -62,6 +70,7 @@ cppFunction('
           return distances;
       }')
 
+
 full_table <- data.frame()
 # Grab data from files
 for (file in files) { 
@@ -69,18 +78,23 @@ for (file in files) {
   print(well)
   file_name <- paste0(path2,file)
   
+  #if chemical not given in wellmap, skip its processing
+  if(!(well %in% as.vector(lookup$WellName))) {
+    print("skipped")
+    next
+  }
+  
   #check to make sure the file isnt empty, the well could have no cells and thus would provide an empty file even though it was processed
   if(file.size(file_name)>0){ 
     table <- read.table(file_name,sep="\t",header=TRUE,fill = TRUE)
     #print(colnames(table))
-    table <- table[,c("WellName","Plane", "Cells...Lipid.In.Cell..Overlap....", "Cells...Cell.Centroid.X.in.Image..µm.", "Cells...Cell.Centroid.Y.in.Image..µm.")]
+    table <- table[,c("WellName","Plane", "Nuclei.Selected...Cytoplasm.Overlap....", "Nuclei.Selected...Cytoplasm.Centroid.X.in.Image..µm.", "Nuclei.Selected...Cytoplasm.Centroid.Y.in.Image..µm.")]
     num_of_cells <- nrow(table)
     # Threshold of 5 lipids as buffer for analytical error
-    # table <- table[table$`Cells...Lipid.In.Cell..Overlap....` > 5, ]
+    # table <- table[table$`Nuclei.Selected...Cytoplasm.Overlap....` > 5, ]
     table$CellID <- sapply(1:nrow(table), function(x) generate_cellID(8))
     
     plane_tables <- split(table, table$Plane)
-    
     #TODO: calculating through each plane increases time linearly, find a way to speed this up, cant use mclapply because plane calculations are dependent on one another 
     for (i in seq_along(plane_tables)[-length(plane_tables)]) {  # Skip the last plane as it has no plane above it
       # Define the C++ function
@@ -90,25 +104,26 @@ for (file in files) {
       above_plane_table <- plane_tables[[i + 1]]     
       
       # Convert the relevant columns to a numeric matrix
-      current_coords <- as.matrix(current_plane_table[, c("Cells...Cell.Centroid.X.in.Image..µm.", "Cells...Cell.Centroid.Y.in.Image..µm.")])
-      above_coords <- as.matrix(above_plane_table[, c("Cells...Cell.Centroid.X.in.Image..µm.", "Cells...Cell.Centroid.Y.in.Image..µm.")])
+      current_coords <- as.matrix(current_plane_table[, c("Nuclei.Selected...Cytoplasm.Centroid.X.in.Image..µm.", "Nuclei.Selected...Cytoplasm.Centroid.Y.in.Image..µm.")])
+      above_coords <- as.matrix(above_plane_table[, c("Nuclei.Selected...Cytoplasm.Centroid.X.in.Image..µm.", "Nuclei.Selected...Cytoplasm.Centroid.Y.in.Image..µm.")])
      
+      #start <- Sys.time()
        # Calculate distances using the C++ function
       distances <- calc_distances(current_coords, above_coords)
-     
+      #print( Sys.time() - start )
        # Assign row and column names to the distance matrix based on CellID
       rownames(distances) <- current_plane_table$CellID
       colnames(distances) <- above_plane_table$CellID
       
       # Set a threshold for determining if cells are "close enough"
-      threshold_distance <- 3
+      threshold_distance <- 5
       
       get_closest_cell <- function(column, distances) {
         min_distance <- min(column)  # Get the minimum distance in the column
         closest_index <- which.min(column)  # Get the index of the closest cell
         return(c(min_distance, closest_index))  # Return both values as a vector
       }
-      
+
       # Use mclapply to compute min distances and closest cells in parallel
       results <- mclapply(1:ncol(distances), function(j) {
         get_closest_cell(distances[, j], distances)  # Process each column
@@ -132,7 +147,7 @@ for (file in files) {
       group_by(CellID) %>%                            # Group by cellID
       summarize(
         Plane = paste(min(Plane), max(Plane), sep = "-"),  # List Plane "min-max" as start-stop
-        Num_of_Lipids = sum(Cells...Lipid.In.Cell..Overlap....), # Sum number of lipids in cell accross all planes
+        Num_of_Lipids = sum(Nuclei.Selected...Cytoplasm.Overlap....), # Sum number of lipids in cell accross all planes
         WellName = well
       ) %>%
       ungroup()
@@ -152,8 +167,6 @@ summary_table <- full_table %>%
 summary_table$`Number of Cells` <- as.numeric(summary_table$`Number of Cells`)
 summary_table$`Cells with Lipid` <- as.numeric(summary_table$`Cells with Lipid`)
 summary_table$"% Cells with Lipid" <- summary_table$`Cells with Lipid`/summary_table$`Number of Cells`
-
-
 
 data = summary_table
 datamerged <- left_join(data, lookup, by = "WellName")

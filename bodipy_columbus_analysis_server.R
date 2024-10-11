@@ -20,6 +20,7 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   # Ensure temp directory is deleted when session ends
   session$onSessionEnded(function() {
     if (dir.exists(temp_dir)) {
+      file.copy(from = temp_dir, to="~/storage/Atlas_lab_app/Extra/temp_dir_dump", recursive= TRUE)
       unlink(temp_dir, recursive = TRUE)
       print("temp dir deleted")
       # Reset temp_dir after deletion to ensure a fresh one is created
@@ -47,9 +48,6 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     }
     unzip(input$Wellmap_Files$datapath, exdir = wellmap_dir, junkpaths = TRUE)
 
-    print("///////////////")
-    print(paste0(biological_rep_dir, "/", input$Columbus_Data_Files$name))
-    
     biological_rep_folders <<- list.dirs(paste0(biological_rep_dir, "/", file_path_sans_ext(input$Columbus_Data_Files$name)), 
       recursive = FALSE, full.names = TRUE
     )
@@ -74,18 +72,9 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   observeEvent(input$temp_data_submit, { 
     req(input$temp_data_file)  # Ensure the temp data file input is available
     req(input$Control_Name_Input)
+    
     unzip(input$temp_data_file$datapath, exdir = temp_analysis_dir, junkpaths = TRUE)
     
-    # Define the path to the temp_analysis_data folder
-    #temp_data_folder <- file.path(results_dir, file_path_sans_ext(input$temp_data_file$name))
-    
-    # Move files from temp_analysis_data to results_dir
-    #file.copy(list.files(temp_data_folder, full.names = TRUE), results_dir, overwrite = TRUE)
-    
-    # Optionally, remove the temp_analysis_data folder if no longer needed
-    #unlink(temp_data_folder, recursive = TRUE)
-    
-    # Directly render the checkbox wells after unzipping
     render_checkbox_wells()
   })
   
@@ -179,7 +168,8 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     # Render the R Markdown report
     rmarkdown::render("Columbus_Analysis/Rshiny_file_output.Rmd",
                       params = list(results_dir = results_dir,
-                                    control_name = input$Control_Name_Input),
+                                    control_name = input$Control_Name_Input,
+                                    control_dose = input$Control_Dose),
                       output_dir = temp_dir)
     #testing output_dir
     #output_dir = "~/storage/Atlas_lab_app/Columbus_Analysis")

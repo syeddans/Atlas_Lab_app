@@ -5,11 +5,13 @@ params:
   results_dir: "~/storage/Atlas_lab_app/test_output"
   #default "DMSO" MAKE SURE THE CONTROL IS RIGHT OR ELSE IT WILL BREAK DUE TO STATS COMPARISONS 
   control_name: "DMSO" 
+  control_dose: 0
 ---
 ```{r}
 # Access the parameters
 results_dir <- params$results_dir
 control_name <- params$control_name
+control_dose <- params$control_dose
 
 ```
 
