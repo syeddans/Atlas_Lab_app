@@ -2,6 +2,8 @@ bodipyColumbusAnalysisUI <- function() {
   tabPanel("BODIPY Columbus Analysis",
            sidebarPanel(
              tags$h3("Input:"),
+             textInput("Processed_file_name", "Analysis Name", 
+                       value = paste("processed_data_", Sys.Date(),sep = "")),
              fileInput("Columbus_Data_Files", "input Columbus Output files as .zip", multiple = FALSE, accept = NULL, width = NULL),
              fileInput("Wellmap_Files", "input Columbus Output files as .zip", multiple = FALSE, accept = NULL, width = NULL),
              fluidRow(

@@ -4,6 +4,12 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   results_dir <<- paste0(temp_dir, "/output/")
   temp_analysis_dir <- paste0(temp_dir, "/temp_analysis_data/")
   ui_elements <- list()
+  analysis_choices <- c(
+    "%+/- Lipid (BODIPY) cells" = "1", 
+    "Avg Number of Lipid per cell" = "2", 
+    "Avg Lipid Intensity per cell" = "3", 
+    "Mean Lipid Size" = "4"
+  )
   # Check if results directory exists, and create it if not
   if (!dir.exists(results_dir)) {
     dir.create(results_dir, recursive = TRUE)
@@ -33,6 +39,7 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     req(input$Columbus_Data_Files)
     req(input$Wellmap_Files)
     req(input$Control_Name_Input)
+    req(input$Processed_file_name)
     
     id <- showNotification("One moment", duration = NULL, closeButton = FALSE)
     # Unzip files
@@ -74,11 +81,16 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     req(input$Control_Name_Input)
     
     unzip(input$temp_data_file$datapath, exdir = temp_analysis_dir, junkpaths = TRUE)
+    output$tables <- renderUI({
+      ui_elements[[length(ui_elements) + 1]] <-selectInput("data_analysis_type", "Select Type of Analysis", choices = analysis_choices)
+      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
+      tagList(ui_elements)
+    })
+    #render_checkbox_wells()
     
-    render_checkbox_wells()
   })
   
-  # Submit 2: Process the selected wells to generate shiny report
+  # Submit 2: Process the selected wells to run analysis
   observeEvent(input$submit2, {
     req(biological_rep_folders)  # Ensure the folders are available
     
@@ -93,17 +105,28 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
       if ((basename(folder) %in% input$checkboxes_replicates) || (basename(folder) %in% file_path_sans_ext(list.files(temp_analysis_dir)))){
         next  # Skip folders that should be excluded whether they were already prcoessed or choosen not to be prcoessed 
       }
-      system(paste("Rscript", shQuote("Columbus_Analysis/Columbus Number of Cells with Lipid pipeline.R"),
-                   shQuote(folder), shQuote(temp_analysis_dir), shQuote(wellmap_folder)))
+      system(paste("Rscript", 
+                   shQuote("Columbus_Analysis/Columbus Number of Cells with Lipid pipeline.R"),
+                   shQuote(folder), 
+                   shQuote(temp_analysis_dir), 
+                   shQuote(wellmap_folder), 
+                   input$data_analysis_type))
     }
     removeNotification(id)
   
-    file.copy(from = list.files(results_dir, full.names = TRUE), to = temp_analysis_dir, overwrite = TRUE)
+    #file.copy(from = list.files(results_dir, full.names = TRUE), to = temp_analysis_dir, overwrite = TRUE)
 
     # Render well checkboxes after processing files
+    output$tables <- renderUI({
+      ui_elements[[length(ui_elements) + 1]] <-selectInput("data_analysis_type", "Select Type of Analysis", choices = analysis_choices)
+      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
+      tagList(ui_elements)
+    })
+  })
+  observeEvent(input$submit3, {
+    
     render_checkbox_wells()
   })
-  
   # Function to render well checkboxes
   render_checkbox_wells <- function() {
     output$tables <- renderUI({
@@ -119,8 +142,16 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
         # Create custom labels for each well
         file_df <- read.table(file, sep = "\t", header = TRUE)
         checkbox_labels <- paste(
-          file_df$WellName, ":", file_df$chemical, 
-          "-", file_df$Cells.with.Lipid, "/", file_df$Number.of.Cells
+          file_df$WellName, ":", file_df$chemical, "-",
+          if (input$data_analysis_type == "1") {
+            paste(file_df$Cells_with_Lipid, "/", file_df$Number_of_Cells)
+          } else if (input$data_analysis_type == "2") {
+            paste(file_df$Number_of_Lipid, "/", file_df$Number_of_Cells)
+          } else if (input$data_analysis_type == "3") {
+            paste(file_df$Avg_Lipid_Intensity)
+          } else if (input$data_analysis_type == "4") {
+            paste(file_df$Avg_Lipid_Area)
+          }
         )
         
         # Add checkbox group for wells
@@ -132,7 +163,7 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
       }
       
       # Add a third submit button
-      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
+      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit4", "Submit 4")
       ui_elements[[length(ui_elements) + 1]] <- downloadButton("download_temp_data", "Download Temp Data")
       ui_elements[[length(ui_elements) + 1]] <- downloadButton("downloadData", "Download Processed Data")
       
@@ -142,10 +173,10 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   }
   
   # Submit 3: Process the selected wells to generate shiny report
-  observeEvent(input$submit3, {
+  observeEvent(input$submit4, {
     file.copy(from = list.files(temp_analysis_dir, full.names = TRUE), to = results_dir, recursive = TRUE)
     
-    for (file in list.files(results_dir, full.names = TRUE)) { 
+    for (file in list.files(temp_analysis_dir, full.names = TRUE)) { 
       file_df <- read.table(file, sep = "\t", header = TRUE)
       
       # Each group of checkboxes of the technical replicates is given a unique Id, this is to access it
@@ -160,17 +191,18 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
         updated_file_df <- file_df[!file_df$WellName %in% selected_well_names, ]
 
         # Save updated file
-        write.table(updated_file_df, file = paste0(temp_analysis_dir, "/", basename(file)),
+        write.table(updated_file_df, file = paste0(results_dir, "/", basename(file)),
                     sep = "\t", row.names = FALSE)
       }
     }
-    
+    print(list.files(results_dir))
     # Render the R Markdown report
     rmarkdown::render("Columbus_Analysis/Rshiny_file_output.Rmd",
-                      params = list(results_dir = results_dir,
+                      params = list(title = input$Processed_file_name,
+                                    results_dir = results_dir,
                                     control_name = input$Control_Name_Input,
                                     control_dose = input$Control_Dose),
-                      output_dir = temp_dir)
+                                    output_dir = temp_dir)
     #testing output_dir
     #output_dir = "~/storage/Atlas_lab_app/Columbus_Analysis")
     id <- showNotification("Data Processed and ready to be downloaded", duration = NULL, closeButton = TRUE)
@@ -191,7 +223,7 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     # Define the file name for download 
     # TODO: maybe edit file name 
     filename = function() {
-      paste("processed_data_", Sys.Date(), ".html", sep = "")
+      paste0(input$Processed_file_name,".html", sep = "")
     },
     
     content = function(file) {

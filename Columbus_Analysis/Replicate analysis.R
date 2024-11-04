@@ -7,41 +7,49 @@ library(multcomp)
 library(stringr)
 library("aod")
 
-# test path "~/storage/Atlas_lab_app/test_output/"
-path = results_dir
+# test path 
+path = results_dir #"~/storage/Atlas_lab_app/test_output/"
 files = list.files(path, pattern=NULL, all.files=FALSE, 
                    full.names=FALSE)
 
 #default "DMSO" MAKE SURE THE CONTROL IS RIGHT OR ELSE IT WILL BREAK DUE TO STATS COMPARISONS 
-control_dose_num = 0#control_dose
-control = "Lean"#control_name
+control_dose_num = control_dose
+control = control_name
 
+print(files)
 # Extract Data from files created from script 
+data_analysis_type <-input$data_analysis_type
 df <- data_frame()
 for (file in files) { 
     dftemp <- read.table(paste0(path,"/", file),sep="\t",header=TRUE,fill = TRUE)
     dftemp<- dftemp %>%
-      group_by(chemical) %>% 
-      reframe("cellswithlipid"= mean(X..Cells.with.Lipid), #technical rep average
-                chemicalgroup= first(chemicalgroup))
+      group_by(Chemical) %>% 
+      reframe("Metric"= case_when( 
+                data_analysis_type == "1" ~ X..Cells.with.Lipid,
+                data_analysis_type == "2" ~ Number_of_Lipid,
+                data_analysis_type == "3" ~ Avg_Lipid_Intensity, 
+                data_analysis_type == "4" ~ Avg_Lipid_Area), #technical rep average
+                "chemicalgroup"= chemicalgroup,
+                "Well"= WellName,
+                "SEM" = std.error(X..Cells.with.Lipid))
     df <- rbind(df,dftemp)
 }
 
 #if concentration before chemical name
-df$chemical <- as.double(gsub("([0-9]*\\.?[0-9]+).*", "\\1", as.character(df$chemical)))
+df$Chemical <- as.double(gsub("([0-9]*\\.?[0-9]+).*", "\\1", as.character(df$Chemical)))
 
 #if concentration is after chemical name 
 #df$chemical <- str_extract(df$chemical, "(?<=\\s)[0-9.]+")
 
 
 # Formatting for graphing later on
-names(df)[names(df) == "chemical"] <- "Dose"
+names(df)[names(df) == "Chemical"] <- "Dose"
 df$Dose <- replace(df$Dose, is.na(df$Dose), 0)
 df$Dose<-as.double(df$Dose)
 df$graphing_sort <- paste0(format(df$Dose, nsmall = 1), "_", format(df$chemicalgroup, nsmall = 1))
 df3<- df %>% 
   group_by(graphing_sort, Dose, chemicalgroup) %>% 
-  summarize("cellswithlipid"= mean(cellswithlipid), SEM = std.error(cellswithlipid))
+  summarize("Metric"= mean(Metric), SEM = std.error(Metric))
 
 null_stats = TRUE
 if(length(files)>1){
@@ -60,7 +68,7 @@ if(length(files)>1){
       # This is for comparing multiple concentrations using a quasibinomial distribution model 
       if(length(unique(df2$Dose))>1) { 
         df2$Dose<- factor(df2$Dose)
-        model <- glm(cellswithlipid ~ Dose, family = quasibinomial, data = df2)
+        model <- glm(Metric ~ Dose, family = quasibinomial, data = df2)
         anova(model, test= "F")
         summary<-summary(glht(model, linfct = mcp(Dose = "Dunnett")))
         p_values <- summary$test$pvalues
@@ -117,9 +125,5 @@ if(null_stats == FALSE){
 
 
 df3$graphing_sort <- gsub(" ", "", df3$graphing_sort)
-df3$Dose <- as.double(df3$Dose)
-df3 <- df3[order(df3$chemicalgroup), ]
-rows_to_move <- c(1:4)
-rows_to_move_df <- df3[rows_to_move, ]
-df3 <- df3[!(1:nrow(df3) %in% rows_to_move), ]
-df3 <- rbind(df3, rows_to_move_df)
+df <- df[order(df$chemicalgroup, df$Dose), ]
+

@@ -1,7 +1,8 @@
 ---
-title: "Full Results"
+title: "`r params$title`"
 output: html_document
 params:
+  title: "Full Results"
   results_dir: "~/storage/Atlas_lab_app/test_output"
   #default "DMSO" MAKE SURE THE CONTROL IS RIGHT OR ELSE IT WILL BREAK DUE TO STATS COMPARISONS 
   control_name: "DMSO" 
@@ -36,7 +37,7 @@ library("crosstalk")
 library("d3scatter")
 
 
-chemical_ct <- SharedData$new(df3)
+chemical_ct <- SharedData$new(df)
 
 dt <- datatable(chemical_ct)
 dt
@@ -44,34 +45,32 @@ filter_checkbox("chl", "chemical", chemical_ct, ~chemicalgroup, inline = TRUE)
 
 # Specify a set of main colors
 main_colors <- c("red", "blue", "green", "yellow", "orange", "purple", "cyan", "magenta", "brown", "gray")
-print("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘o’ 0.1")
+print("Signif. codes: ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘o’ 0.1")
 # Create the plot with dynamically adjusted bar width
 plot <-plot_ly(
   data = chemical_ct,
   x = ~graphing_sort,
-  y = ~cellswithlipid,
-  type = 'bar',
+  y = ~Metric,
+  type = 'box',
+  boxpoints = "all",
+  jitter = 0.3,
+  name = ~chemicalgroup, 
+  quartilemethod="linear",
   color = ~chemicalgroup,
   colors = main_colors,
-  name = ~chemicalgroup, 
-  texttemplate = ~sigcode,
+ # texttemplate = ~sigcode,
   textposition = "outside",
   textfont = list(color = "black",
                   size = 30),
-  outsidetextfont = list(color="black"),
-  error_y = list(
-    type = 'data', 
-    array = ~SEM,
-    color = "black"
-  )
+  outsidetextfont = list(color="black")
 ) %>%
   layout(
-    xaxis = list(title = "Chemical Concentration",
+    xaxis = list(title = "Chemical",
                  tickmode = 'array',  # Set tick mode to 'array'
-                  tickvals = df3$graphing_sort,  # Set tick values to be the same as x 
-                    ticktext = df3$graphing_sort,
+                  tickvals =  df$graphing_sort, # Set tick values to be the same as x 
+                    ticktext = df$graphing_sort,
                  tickangle = 90 ),
-    yaxis = list(title = "% Cells with Lipid"),
+    yaxis = list(title = names(analysis_choices)[which(analysis_choices == input$data_analysis_type)]),
     bargap = 0.1,
     width = 800, 
     height = 800
