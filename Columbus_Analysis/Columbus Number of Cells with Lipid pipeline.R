@@ -169,7 +169,7 @@ process_file_through_planes <- function(table,well, threshold_distance = 5) {
   
   
 }
-read_columbus_files <- function(file, lookup,  Num_lipid_threshold = 15) {
+read_columbus_files <- function(file, lookup,  Num_lipid_threshold = 10) {
   
   possible_columns <- c("WellName", 
                         "Plane", 

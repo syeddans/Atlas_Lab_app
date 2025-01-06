@@ -6,7 +6,7 @@ params:
   results_dir: "~/storage/Atlas_lab_app/test_output"
   #default "DMSO" MAKE SURE THE CONTROL IS RIGHT OR ELSE IT WILL BREAK DUE TO STATS COMPARISONS 
   control_name: "DMSO" 
-  control_dose: 0
+  control_dose: NA
 ---
 ```{r}
 # Access the parameters
@@ -37,7 +37,7 @@ library("crosstalk")
 library("d3scatter")
 
 
-chemical_ct <- SharedData$new(df)
+chemical_ct <- SharedData$new(df3)
 
 dt <- datatable(chemical_ct)
 dt
@@ -51,26 +51,38 @@ plot <-plot_ly(
   data = chemical_ct,
   x = ~graphing_sort,
   y = ~Metric,
-  type = 'box',
+  type = input$plot_type,
   boxpoints = "all",
   jitter = 0.3,
   name = ~chemicalgroup, 
   quartilemethod="linear",
-  color = ~chemicalgroup,
+  color = ~graphing_sort,
   colors = main_colors,
- # texttemplate = ~sigcode,
+  #
+  texttemplate = ~sigcode,
   textposition = "outside",
   textfont = list(color = "black",
                   size = 30),
-  outsidetextfont = list(color="black")
+  outsidetextfont = list(color="black"),
+  #
+  error_y = list(
+    type = 'data', 
+    array = ~SEM,
+    color = "black"
+  )
 ) %>%
   layout(
     xaxis = list(title = "Chemical",
                  tickmode = 'array',  # Set tick mode to 'array'
-                  tickvals =  df$graphing_sort, # Set tick values to be the same as x 
-                    ticktext = df$graphing_sort,
+                  tickvals =  df3$graphing_sort, # Set tick values to be the same as x 
+                    ticktext = df3$graphing_sort,
                  tickangle = 90 ),
-    yaxis = list(title = names(analysis_choices)[which(analysis_choices == input$data_analysis_type)]),
+    yaxis = list(
+      title = names(analysis_choices)[which(analysis_choices == input$data_analysis_type)],
+      fixedrange = TRUE,
+      range(0, NA),
+      rangemode = 'tozero'
+    ),
     bargap = 0.1,
     width = 800, 
     height = 800

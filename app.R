@@ -26,6 +26,7 @@ ui <- fluidPage(theme = shinytheme("cerulean"),
 # Define server
 server <- function(input, output, session) {
   bodipyColumbusAnalysisServer(input, output, session)
+  qPCRWesternAnalysisServer(input, output, session)
 
 }
 

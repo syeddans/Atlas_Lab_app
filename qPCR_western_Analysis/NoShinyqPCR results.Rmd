@@ -1,0 +1,118 @@
+---
+title: "Title"
+output: html_document
+params: 
+  rep_files_dir: ""
+  output_dir: "/tmp/Rtmpe9ikQq"
+  control_gene: "b-actin"
+  control_to_check: "mir+vehcon"
+  analysis_type: "qPCR" #qPCR or western
+  chemicalsymbols: c("phe","9p" ,"bap")
+  chemicalnames: c("Phenanthrene","9-ChloroPhenanthrene","BaP")
+  stats_on: "RQ"  #RQ or DeltaCT
+  unit: "uM"
+editor_options:
+  chunk_output_type: console
+---
+
+```{r echo=FALSE, error=FALSE, message=TRUE, warning=TRUE}
+
+rep_files_dir <- params$rep_files_dir
+output_dir <- params$output_dir
+control_gene <- params$control_gene
+control_to_check <- params$control_to_check
+analysis_type <- params$analysis_type
+chemicalsymbols <- params$chemicalsymbols
+chemicalnames <- params$chemicalnames
+stats_on <- params$stats_on
+unit <- params$unit
+t<- list.dirs(output_dir,recursive = TRUE)
+f <- list.files(rep_files_dir)
+```
+
+```{r run script, echo=FALSE, message=FALSE, warning=FALSE}
+
+source("~/storage/Atlas_lab_app/qPCR_western_Analysis/qPCR analysis Script_updated.R", local = TRUE)
+
+```
+
+```{r one time edits, echo = FALSE,warning = FALSE, message = FALSE, progress = FALSE}
+
+  #CTdf <- CTdf[CTdf$concentration != 50, ]
+
+```
+
+```{r plotly-crosstalk, echo = FALSE,warning = FALSE, message = FALSE, progress = FALSE}
+library(DT)
+library(dplyr)
+library(tidyr)
+library(tm)
+library(ggplot2)
+library(forcats)
+library(plotrix)
+library(matrixStats)
+library(remotes)
+library("multcompView")
+library("plotly")
+library("crosstalk")
+library("d3scatter")
+
+CTdf$graphing_sort <- factor(
+  CTdf$graphing_sort,
+  levels = unique(CTdf$graphing_sort)  # Ensure this is ordered as needed
+)
+
+chemical_ct <- SharedData$new(CTdf)
+
+# Step 2-4: Loop through each unique gene, subset data, and create shared objects
+filter_checkbox("chl", "chemical", chemical_ct, ~chemicalgroup, inline = TRUE)
+if(analysis_type=="western"){
+  filter_checkbox("prn", "protein", chemical_ct, ~protein, inline = TRUE)
+}else{ 
+  filter_checkbox("gene", "gene", chemical_ct, ~gene, inline = TRUE)
+}
+
+dt <- datatable(chemical_ct)
+dt
+
+
+# Specify a set of main colors
+main_colors <- c("red", "blue", "green", "yellow", "orange", "purple", "cyan", "magenta", "brown", "gray")
+
+plot <-plot_ly(
+  data = chemical_ct,
+   error_y = ~list(
+    type = 'data', 
+    array = CTdf$SEM,
+    color = "black"
+  ),
+  x = ~graphing_sort,
+  y = ~average_RQ,
+  type = 'bar',
+  color = ~chemical,
+  colors = main_colors,
+  name = ~chemical, 
+  
+  texttemplate = ~sigcode,
+  textposition = "outside",
+  textfont = list(color = "black",
+                  size = 30),
+  outsidetextfont = list(color="black")
+ 
+) %>%
+  layout(
+    xaxis = list(title = "Chemical Concentration",
+                 tickmode = 'array',  # Set tick mode to 'array'
+                  tickvals = ~graphing_sort,  # Set tick values to be the same as x 
+                    ticktext = ~graphing_sort,
+                 tickangle = 90,
+                 categoryorder = "category ascending"),
+    yaxis = list(title = "Fold Change"),
+    bargap = 0.1,
+    width = 800, 
+    height = 800
+  ) 
+plot
+
+
+```

@@ -5,7 +5,7 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   temp_analysis_dir <- paste0(temp_dir, "/temp_analysis_data/")
   ui_elements <- list()
   analysis_choices <- c(
-    "%+/- Lipid (BODIPY) cells" = "1", 
+    "Ratio of +/- Lipid (BODIPY) cells" = "1", 
     "Avg Number of Lipid per cell" = "2", 
     "Avg Lipid Intensity per cell" = "3", 
     "Mean Lipid Size" = "4"
@@ -83,11 +83,14 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     unzip(input$temp_data_file$datapath, exdir = temp_analysis_dir, junkpaths = TRUE)
     output$tables <- renderUI({
       ui_elements[[length(ui_elements) + 1]] <-selectInput("data_analysis_type", "Select Type of Analysis", choices = analysis_choices)
+      ui_elements[[length(ui_elements) + 1]] <-selectInput("plot_type", "Select Plot Type", choices = c("bar"="bar",
+                                                                                                        "box" = "box"))
+      
       ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
       tagList(ui_elements)
     })
     #render_checkbox_wells()
-    
+    print(input$plot_type)
   })
   
   # Submit 2: Process the selected wells to run analysis
@@ -220,8 +223,6 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
   )
   # Download processed file
   output$downloadData <- downloadHandler(
-    # Define the file name for download 
-    # TODO: maybe edit file name 
     filename = function() {
       paste0(input$Processed_file_name,".html", sep = "")
     },
