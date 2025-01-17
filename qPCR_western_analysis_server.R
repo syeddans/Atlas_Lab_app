@@ -1,61 +1,82 @@
-qPCRWesternAnalysisServer <- function(input, output, session) {
+qpcr_western_analysis_server <- function(input, output, session) {
   # Create a temporary directory to store the extracted files
   temp_dir <- tempdir()
-  results_dir <<- paste0(temp_dir, "/output/")
-  
+  results_dir <- paste0(temp_dir, "/output/")
   # Check if results directory exists, and create it if not
   if (!dir.exists(results_dir)) {
     dir.create(results_dir, recursive = TRUE)
   }
-  
   # Ensure temp directory is deleted when session ends
   session$onSessionEnded(function() {
     if (dir.exists(temp_dir)) {
       unlink(temp_dir, recursive = TRUE)
       print("temp dir deleted")
-      # Reset temp_dir after deletion to ensure a fresh one is created
-      temp_dir <<- tempdir()
+      temp_dir <- tempdir()
     }
   })
-  
-  observeEvent(input$submit_qpcr, {
-    req(input$qPCR_western_files)
-    id <- showNotification("Processing, please wait...", duration = NULL, closeButton = FALSE)
-    qPCR_western_files_dir <- paste0(temp_dir, "/qPCR_western_rep_dir/")
-    if (!dir.exists(qPCR_western_files_dir)) {
-      dir.create(qPCR_western_files_dir, recursive = TRUE)
-    }
-    unzip(input$qPCR_western_files$datapath, exdir = qPCR_western_files_dir)
+  shiny::observeEvent(input$submit_qpcr, {
+    shiny::req(input$qPCR_western_files)
+    print("qPCR/Western analysis submit button pressed")
+    id <- shiny::showNotification(
+      "Processing, please wait...",
+      duration = NULL,
+      closeButton = FALSE,
+      type = "message"
+    )
     
-    print(list.dirs(file.path(qPCR_western_files_dir, file_path_sans_ext(basename(input$qPCR_western_files$name))),recursive = TRUE))
-    print(file.path(qPCR_western_files_dir, file_path_sans_ext(basename(input$qPCR_western_files$name))))
-    print(paste0(qPCR_western_files_dir, file_path_sans_ext(basename(input$qPCR_western_files$name))))
-    rmarkdown::render("qPCR_western_Analysis/NoShinyqPCR results.Rmd",
-                      params = list(rep_files_dir= file.path(qPCR_western_files_dir, file_path_sans_ext(basename(input$qPCR_western_files$name))),
-                                      output_dir= temp_dir,
-                                      control_gene= input$Control_gene_input,
-                                      control_to_check= input$Control_name_input,
-                                      analysis_type= input$qPCR_or_Western, #qPCR or western
-                                      chemicalsymbols= strsplit(input$chemical_symbols, ",")[[1]],
-                                      chemicalnames= strsplit(input$chemical_name_full, ",")[[1]],
-                                      stats_on= input$RQ_or_DDCT),  #RQ or DeltaCT
-                                      quiet = FALSE,envir = globalenv(), output_dir = temp_dir)
+    qpcr_western_files_dir <- paste0(temp_dir, "/qpcr_western_rep_dir/")
+    if (!dir.exists(qpcr_western_files_dir)) {
+      dir.create(qpcr_western_files_dir, recursive = TRUE)
+    }
+    print(paste("Temp directory path:", qpcr_western_files_dir))
+    
+    # Get original file name and create path
+    original_filename <- input$qPCR_western_files$name
+    files_path <- file.path(qpcr_western_files_dir, original_filename)
+    
+    # Copy file and verify
+    file.copy(input$qPCR_western_files$datapath, files_path, overwrite = TRUE)
  
+    rmarkdown::render(
+      "qPCR_western_Analysis/NoShinyqPCR results.Rmd",
+      params = list(
+        formatted_data_path = files_path,
+        output_dir = temp_dir,
+        control_gene = tolower(gsub("\\s+", "", input$Control_gene_input)),
+        control_to_check = tolower(gsub("\\s+", "", input$Control_name_input)),
+        analysis_type = input$qPCR_or_Western,
+        chemicalsymbols = strsplit(input$chemical_symbols, ",")[[1]],
+        chemicalnames = strsplit(input$chemical_name_full, ",")[[1]],
+        stats_on = input$RQ_or_DDCT
+      ),
+      quiet = FALSE,
+      envir = globalenv(),
+      output_dir = temp_dir
+    )
+    print(list.files(temp_dir))
     ui_elements <- list()
-    output$tables2 <- renderUI({
-      ui_elements[[length(ui_elements) + 1]] <- downloadButton("download_results_data", "Download Results")
-      tagList(ui_elements)
+    output$tables2 <- shiny::renderUI({
+      ui_elements[[length(ui_elements) + 1]] <- shiny::downloadButton(
+        "download_results_data",
+        "Download Results"
+      )
+      shiny::tagList(ui_elements)
     })
-    #browser() 
-    removeNotification(id)
-     })
-
-output$download_results_data <- downloadHandler(
-  filename = "results.html",
-  
-  content = function(file) {
-    # Copy the file from the temp directory to the download location
-    file.copy(file.path(temp_dir, "NoShinyqPCR-results.html"), file)
-  }
-)
+    shiny::removeNotification(id)
+  })
+  output$download_results_data <- shiny::downloadHandler(
+    filename = "results.zip",
+    content = function(file) {
+      zip_file <- tempfile(fileext = ".zip")
+      zip(zip_file, c(
+        file.path(temp_dir, "NoShinyqPCR-results.html"),
+        file.path(temp_dir, "analysis_log.txt"),
+        file.path(temp_dir, "input_data_formatted.csv"),
+        file.path(temp_dir, "input_data_averaged.csv"),
+        file.path(temp_dir, "data_processed.csv")
+      ))
+      file.copy(zip_file, file)
+      unlink(zip_file)  # Clean up the temporary zip file
+    }
+  )
 }

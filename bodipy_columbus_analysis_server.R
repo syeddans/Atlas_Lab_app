@@ -1,36 +1,40 @@
-bodipyColumbusAnalysisServer <- function(input, output, session) {
+bodipyColumbusAnalysisServer <- function(input, output, session) { # nolint
   # Create a temporary directory to store the extracted files
   temp_dir <- tempdir()
-  results_dir <<- paste0(temp_dir, "/output/")
+  results_dir <- paste0(temp_dir, "/output/")
   temp_analysis_dir <- paste0(temp_dir, "/temp_analysis_data/")
   ui_elements <- list()
   analysis_choices <- c(
-    "Ratio of +/- Lipid (BODIPY) cells" = "1", 
-    "Avg Number of Lipid per cell" = "2", 
-    "Avg Lipid Intensity per cell" = "3", 
+    "Ratio of +/- Lipid (BODIPY) cells" = "1",
+    "Avg Number of Lipid per cell" = "2",
+    "Avg Lipid Intensity per cell" = "3",
     "Mean Lipid Size" = "4"
   )
+
   # Check if results directory exists, and create it if not
   if (!dir.exists(results_dir)) {
     dir.create(results_dir, recursive = TRUE)
   }
-  
+
   if (!dir.exists(temp_analysis_dir)) {
     dir.create(temp_analysis_dir, recursive = TRUE)
   }
-  
+
   biological_rep_folders <- NULL
   wellmap_folder <- NULL
-  
-  
+
   # Ensure temp directory is deleted when session ends
   session$onSessionEnded(function() {
     if (dir.exists(temp_dir)) {
-      file.copy(from = temp_dir, to="~/storage/Atlas_lab_app/Extra/temp_dir_dump", recursive= TRUE)
+      file.copy(
+        from = temp_dir,
+        to = "~/storage/Atlas_lab_app/Extra/temp_dir_dump",
+        recursive = TRUE
+      )
       unlink(temp_dir, recursive = TRUE)
       print("temp dir deleted")
       # Reset temp_dir after deletion to ensure a fresh one is created
-      temp_dir <<- tempdir()
+      temp_dir <- tempdir()
     }
   })
   
@@ -40,63 +44,89 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     req(input$Wellmap_Files)
     req(input$Control_Name_Input)
     req(input$Processed_file_name)
-    
-    id <- showNotification("One moment", duration = NULL, closeButton = FALSE)
+
+    id <- showNotification(
+      "One moment",
+      duration = NULL,
+      closeButton = FALSE
+    )
+
     # Unzip files
     biological_rep_dir <- paste0(temp_dir, "/biological_rep_dir/")
     if (!dir.exists(biological_rep_dir)) {
       dir.create(biological_rep_dir, recursive = TRUE)
     }
     unzip(input$Columbus_Data_Files$datapath, exdir = biological_rep_dir)
-    
+
     wellmap_dir <- paste0(temp_dir, "/wellmap_dir/")
     if (!dir.exists(wellmap_dir)) {
       dir.create(wellmap_dir, recursive = TRUE)
     }
-    unzip(input$Wellmap_Files$datapath, exdir = wellmap_dir, junkpaths = TRUE)
-
-    biological_rep_folders <<- list.dirs(paste0(biological_rep_dir, "/", file_path_sans_ext(input$Columbus_Data_Files$name)), 
-      recursive = FALSE, full.names = TRUE
+    unzip(
+      input$Wellmap_Files$datapath,
+      exdir = wellmap_dir,
+      junkpaths = TRUE
     )
-    wellmap_folder <<- wellmap_dir
-    
-    #print("temp dirs")
-    #print(list.files(temp_dir, full.names = TRUE, recursive =  TRUE))
-    
+
+    biological_rep_folders <- list.dirs(
+      paste0(
+        biological_rep_dir,
+        "/",
+        file_path_sans_ext(input$Columbus_Data_Files$name)
+      ),
+      recursive = FALSE,
+      full.names = TRUE
+    )
+    wellmap_folder <- wellmap_dir
+
     insertUI(
-      selector = "#submit",  # Place it after the initial submit button
+      selector = "#submit",
       where = "afterEnd",
       ui = tagList(
-        checkboxGroupInput("checkboxes_replicates", "Select Biological Replicates to Remove", 
-                           choices = basename(biological_rep_folders)),
+        checkboxGroupInput(
+          "checkboxes_replicates",
+          "Select Biological Replicates to Remove",
+          choices = basename(biological_rep_folders)
+        ),
         actionButton("submit2", "Submit 2")
       )
     )
     removeNotification(id)
   })
-  
+
   # Observe the Temp Data Submit button
-  observeEvent(input$temp_data_submit, { 
-    req(input$temp_data_file)  # Ensure the temp data file input is available
+  observeEvent(input$temp_data_submit, {
+    req(input$temp_data_file)
     req(input$Control_Name_Input)
-    
-    unzip(input$temp_data_file$datapath, exdir = temp_analysis_dir, junkpaths = TRUE)
+
+    unzip(
+      input$temp_data_file$datapath,
+      exdir = temp_analysis_dir,
+      junkpaths = TRUE
+    )
     output$tables <- renderUI({
-      ui_elements[[length(ui_elements) + 1]] <-selectInput("data_analysis_type", "Select Type of Analysis", choices = analysis_choices)
-      ui_elements[[length(ui_elements) + 1]] <-selectInput("plot_type", "Select Plot Type", choices = c("bar"="bar",
-                                                                                                        "box" = "box"))
-      
-      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
+      ui_elements[[length(ui_elements) + 1]] <- selectInput(
+        "data_analysis_type",
+        "Select Type of Analysis",
+        choices = analysis_choices
+      )
+      ui_elements[[length(ui_elements) + 1]] <- selectInput(
+        "plot_type",
+        "Select Plot Type",
+        choices = c("bar" = "bar", "box" = "box")
+      )
+      ui_elements[[length(ui_elements) + 1]] <- actionButton(
+        "submit3",
+        "Submit 3"
+      )
       tagList(ui_elements)
     })
-    #render_checkbox_wells()
     print(input$plot_type)
   })
-  
+
   # Submit 2: Process the selected wells to run analysis
   observeEvent(input$submit2, {
     req(biological_rep_folders)  # Ensure the folders are available
-    
     # Clear the output UI before rendering new checkboxes for wells
     output$tables <- renderUI({})
     
@@ -105,43 +135,49 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     
     # Logic for excluding selected replicates
     for (folder in biological_rep_folders) {
-      if ((basename(folder) %in% input$checkboxes_replicates) || (basename(folder) %in% file_path_sans_ext(list.files(temp_analysis_dir)))){
+      if ((basename(folder) %in% input$checkboxes_replicates) || 
+      (basename(folder) %in% file_path_sans_ext(list.files(temp_analysis_dir)))){
         next  # Skip folders that should be excluded whether they were already prcoessed or choosen not to be prcoessed 
       }
-      system(paste("Rscript", 
-                   shQuote("Columbus_Analysis/Columbus Number of Cells with Lipid pipeline.R"),
-                   shQuote(folder), 
-                   shQuote(temp_analysis_dir), 
-                   shQuote(wellmap_folder), 
-                   input$data_analysis_type))
+      system(paste(
+        "Rscript",
+        shQuote("Columbus_Analysis/Columbus Number of Cells with Lipid pipeline.R"),
+        shQuote(folder),
+        shQuote(temp_analysis_dir),
+        shQuote(wellmap_folder),
+        input$data_analysis_type
+      ))
     }
     removeNotification(id)
-  
-    #file.copy(from = list.files(results_dir, full.names = TRUE), to = temp_analysis_dir, overwrite = TRUE)
 
-    # Render well checkboxes after processing files
     output$tables <- renderUI({
-      ui_elements[[length(ui_elements) + 1]] <-selectInput("data_analysis_type", "Select Type of Analysis", choices = analysis_choices)
-      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit3", "Submit 3")
+      ui_elements[[length(ui_elements) + 1]] <- selectInput(
+        "data_analysis_type",
+        "Select Type of Analysis",
+        choices = analysis_choices
+      )
+      ui_elements[[length(ui_elements) + 1]] <- actionButton(
+        "submit3",
+        "Submit 3"
+      )
       tagList(ui_elements)
     })
   })
+
   observeEvent(input$submit3, {
-    
     render_checkbox_wells()
   })
+
   # Function to render well checkboxes
   render_checkbox_wells <- function() {
     output$tables <- renderUI({
-      
-      #print(list.dirs(temp_dir))
       for (file in list.files(temp_analysis_dir, full.names = TRUE)) {
         if (!is.null(input$checkboxes_replicates)){ 
-          if (file_path_sans_ext(basename(file)) %in% file_path_sans_ext(input$checkboxes_replicates)) {
+          if (file_path_sans_ext(basename(file)) %in% 
+          file_path_sans_ext(input$checkboxes_replicates)) {
             next  # Skip folders that should be excluded
           }
         }
-        
         # Create custom labels for each well
         file_df <- read.table(file, sep = "\t", header = TRUE)
         checkbox_labels <- paste(
@@ -164,17 +200,24 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
           choices = checkbox_labels
         )
       }
-      
-      # Add a third submit button
-      ui_elements[[length(ui_elements) + 1]] <- actionButton("submit4", "Submit 4")
-      ui_elements[[length(ui_elements) + 1]] <- downloadButton("download_temp_data", "Download Temp Data")
-      ui_elements[[length(ui_elements) + 1]] <- downloadButton("downloadData", "Download Processed Data")
-      
-      # Return the UI elements to display
+
+      ui_elements[[length(ui_elements) + 1]] <- actionButton(
+        "submit4",
+        "Submit 4"
+      )
+      ui_elements[[length(ui_elements) + 1]] <- downloadButton(
+        "download_temp_data",
+        "Download Temp Data"
+      )
+      ui_elements[[length(ui_elements) + 1]] <- downloadButton(
+        "downloadData",
+        "Download Processed Data"
+      )
+
       tagList(ui_elements)
     })
   }
-  
+
   # Submit 3: Process the selected wells to generate shiny report
   observeEvent(input$submit4, {
     file.copy(from = list.files(temp_analysis_dir, full.names = TRUE), to = results_dir, recursive = TRUE)
@@ -216,17 +259,16 @@ bodipyColumbusAnalysisServer <- function(input, output, session) {
     filename = function() {
       paste("temp_data", Sys.Date(), ".zip", sep = "")
     },
-    
     content = function(file) {
       zip(file, temp_analysis_dir)
     }
   )
+
   # Download processed file
   output$downloadData <- downloadHandler(
     filename = function() {
-      paste0(input$Processed_file_name,".html", sep = "")
+      paste0(input$Processed_file_name, ".html")
     },
-    
     content = function(file) {
       # Copy the file from the temp directory to the download location
       file.copy(file.path(temp_dir, "Rshiny_file_output.html"), file)

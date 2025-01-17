@@ -2,7 +2,7 @@
 title: "Title"
 output: html_document
 params: 
-  rep_files_dir: ""
+  formatted_data_path: ""
   output_dir: "/tmp/Rtmpe9ikQq"
   control_gene: "b-actin"
   control_to_check: "mir+vehcon"
@@ -15,9 +15,17 @@ editor_options:
   chunk_output_type: console
 ---
 
+```{r setup, include=FALSE}
+# Create two output options
+knitr::opts_chunk$set(
+  message = FALSE,  # Default to no messages
+  warning = FALSE   # Default to no warnings
+)
+```
+
 ```{r echo=FALSE, error=FALSE, message=TRUE, warning=TRUE}
 
-rep_files_dir <- params$rep_files_dir
+formatted_data_path <- params$formatted_data_path
 output_dir <- params$output_dir
 control_gene <- params$control_gene
 control_to_check <- params$control_to_check
@@ -26,13 +34,29 @@ chemicalsymbols <- params$chemicalsymbols
 chemicalnames <- params$chemicalnames
 stats_on <- params$stats_on
 unit <- params$unit
-t<- list.dirs(output_dir,recursive = TRUE)
-f <- list.files(rep_files_dir)
 ```
 
-```{r run script, echo=FALSE, message=FALSE, warning=FALSE}
+```{r run script, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+# Source the script and run analysis
 
-source("~/storage/Atlas_lab_app/qPCR_western_Analysis/qPCR analysis Script_updated.R", local = TRUE)
+sink(file.path(output_dir, "analysis_log.txt"))
+output <- capture.output(source("qPCR_western_Analysis/qPCR analysis Script_updated.R", local = TRUE))
+formatted_data <- read.csv(formatted_data_path)
+formatted_data$chemical <- tolower(gsub(" ", "", formatted_data$chemical))
+final_df <- process_all_replicates(formatted_data, analysis_type, control_to_check)
+CTdf <- process_CTdf(final_df, stats_on = "RQ", control_to_check = control_to_check, 
+                    analysistype = analysis_type, unit = "uM", 
+                    gene_or_protein_label = "gene")
+
+# Save formatted data
+write.csv(formatted_data, file.path(output_dir, "input_data_formatted.csv"), row.names = FALSE)
+
+# Save averaged data
+write.csv(final_df, file.path(output_dir, "input_data_averaged.csv"), row.names = FALSE)
+
+# Save processed data
+write.csv(CTdf, file.path(output_dir, "data_processed.csv"), row.names = FALSE)
+sink()
 
 ```
 
@@ -42,7 +66,7 @@ source("~/storage/Atlas_lab_app/qPCR_western_Analysis/qPCR analysis Script_updat
 
 ```
 
-```{r plotly-crosstalk, echo = FALSE,warning = FALSE, message = FALSE, progress = FALSE}
+```{r plotly-crosstalk, echo = FALSE,warning = FALSE, message = TRUE, progress = FALSE, eval = TRUE}
 library(DT)
 library(dplyr)
 library(tidyr)
@@ -56,63 +80,86 @@ library("multcompView")
 library("plotly")
 library("crosstalk")
 library("d3scatter")
-
-CTdf$graphing_sort <- factor(
-  CTdf$graphing_sort,
-  levels = unique(CTdf$graphing_sort)  # Ensure this is ordered as needed
-)
+library(ggiraph)
+library(viridis)
 
 chemical_ct <- SharedData$new(CTdf)
 
-# Step 2-4: Loop through each unique gene, subset data, and create shared objects
+
 filter_checkbox("chl", "chemical", chemical_ct, ~chemicalgroup, inline = TRUE)
-if(analysis_type=="western"){
+if(params$analysis_type=="western"){
   filter_checkbox("prn", "protein", chemical_ct, ~protein, inline = TRUE)
 }else{ 
   filter_checkbox("gene", "gene", chemical_ct, ~gene, inline = TRUE)
 }
-
 dt <- datatable(chemical_ct)
 dt
 
 
-# Specify a set of main colors
-main_colors <- c("red", "blue", "green", "yellow", "orange", "purple", "cyan", "magenta", "brown", "gray")
+# Create a color palette with enough colors for all your data points
+n_colors <- length(unique(chemical_ct$data()$graphing_sort))
+color_palette <- viridis::viridis(n_colors)
 
-plot <-plot_ly(
-  data = chemical_ct,
-   error_y = ~list(
-    type = 'data', 
-    array = CTdf$SEM,
-    color = "black"
-  ),
-  x = ~graphing_sort,
-  y = ~average_RQ,
-  type = 'bar',
-  color = ~chemical,
-  colors = main_colors,
-  name = ~chemical, 
+# Get list of unique chemicals
+chem_list <- unique(chemical_ct$data()$chemical)
+
+# Initialize empty list for SharedData objects
+shared_chems <- list()
+
+# Initialize the plot
+p <- plot_ly(type = "bar")
+
+# Create separate SharedData objects for each chemical
+for (i in 1:length(chem_list)) {
+  # Create SharedData object for this chemical
+  shared_chems[[i]] <- SharedData$new(
+    chemical_ct$data()[chemical_ct$data()$chemical == chem_list[i], ],
+    group = chemical_ct$groupName()
+  )
   
-  texttemplate = ~sigcode,
-  textposition = "outside",
-  textfont = list(color = "black",
-                  size = 30),
-  outsidetextfont = list(color="black")
- 
-) %>%
-  layout(
-    xaxis = list(title = "Chemical Concentration",
-                 tickmode = 'array',  # Set tick mode to 'array'
-                  tickvals = ~graphing_sort,  # Set tick values to be the same as x 
-                    ticktext = ~graphing_sort,
-                 tickangle = 90,
-                 categoryorder = "category ascending"),
-    yaxis = list(title = "Fold Change"),
-    bargap = 0.1,
-    width = 800, 
-    height = 800
-  ) 
-plot
+  # Add trace for this chemical
+  p <- add_trace(
+    p,
+    data = shared_chems[[i]],
+    x = ~reorder(paste(chemical, graphing_sort), as.numeric(gsub("[^0-9.]", "", graphing_sort))),
+    y = ~average_RQ,
+    name = chem_list[i],
+    marker = list(color = viridis::viridis(length(chem_list))[i]),
+    error_y = list(
+      type = 'data',
+      array = ~SEM,
+      visible = TRUE,
+      color = "black",
+      thickness = 1,
+      width = 4
+    ),
+    texttemplate = ~sigcode,
+    textposition = "outside",
+    textfont = list(color = "black", size = 30),
+    outsidetextfont = list(color = "black")
+  )
+}
 
+# Add layout
+p <- p %>%
+  layout(
+    xaxis = list(
+      title = "Chemical and Concentration",
+      tickangle = 90,
+      categoryorder = "trace"
+    ),
+    yaxis = list(
+      title = "Fold Change",
+      autorange = TRUE
+    ),
+    barmode = 'group',
+    bargap = 0.1,
+    width = 800,
+    height = 800,
+    showlegend = TRUE
+  )
+
+# Display the plot
+p
 
 ```

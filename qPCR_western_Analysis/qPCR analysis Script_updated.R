@@ -35,119 +35,94 @@ library(MASS)
 library(glmnet)
 library(lme4)
 library(Metrics)
-#rep_files_dir <- "~/storage/qPCR Analysis/Phenanthrene western"
+# Load required packages
+library(dplyr)
+library(tidyr)
+#rep_files_dir <- "~/storage/qPCR Analysis/Phenanthrene western" #update path to a formatted file 
+
 #output_dir <- "~/storage/Atlas_lab_app"
 #control_gene <- "b-actin"
-#control_to_check <- "mir+vehcon"
-#analysis_type <- "western"
-unit <- "uM"
-#chemicalsymbols <- c("phe","9p","bap") #if using full names already leave empty 
-#chemicalnames<- c("phe","9p","bap")
-#stats_on <- 'RQ' #RQ or DeltaCT
+#control_to_check <- "mie"
+#analysis_type <- "qPCR"
+#unit <- "uM"
+#chemicalsymbols <- c() #if using full names already leave empty 
+#chemicalnames<- c()
+#stats_on <- 'RQ' #RQ or DeltaCT 
 
 #output_dir = output_dir
 plate <-0
 CTdf <- data.frame()
 
-# Load required packages
-library(dplyr)
-library(tidyr)
 
-# Function to read and parse files in a plate directory
-parse_plate_files <- function(plate) {
-  plate_files <- list.files(plate, pattern = NULL, all.files = FALSE, full.names = TRUE)
-  platesoutput <- data.frame(value = character(), well = character())
-  
-  for (file in plate_files) {
-    #print(file)
-    dftemp <- data.frame()
-    table <- read.csv(file, sep = ",", header = FALSE, fill = TRUE)
-    colnames(table) <- table[1,]
-    
-    for (row in 2:nrow(table)) {
-      for (col in 2:ncol(table)) {
-        dftemp <- rbind(dftemp, data.frame(value = table[row, col], well = paste0(table[row, 1], table[1, col])))
-      }
-    }
-    
-    if (grepl("-CTmap", file, ignore.case = TRUE)) {
-      colnames(dftemp) <- c("CTvalue", "well")
-    } else if (grepl("-wellmap", file, ignore.case = TRUE)) {
-      colnames(dftemp) <- c("chemical", "well")
-    } else if (grepl("-genemap", file, ignore.case = TRUE) || grepl("-proteinmap", file, ignore.case = TRUE)) {
-      colnames(dftemp) <- c("gene", "well")
-    }
-    
-    if (nrow(platesoutput) == 0) {
-      platesoutput <- dftemp
-    } else {
-      platesoutput <- left_join(platesoutput, dftemp, by = "well")
-    }
-  }
-  
-  platesoutput <- platesoutput %>% distinct() %>% drop_na()
-  platesoutput$chemical <- tolower(gsub(" ", "", platesoutput$chemical))
-  platesoutput$CTvalue <- as.numeric(platesoutput$CTvalue)
-  platesoutput
-}
 
 # Function to calculate average CT values for each gene and chemical
-calculate_average_CT <- function(platesoutput) {
-  platesoutput %>%
+calculate_average_CT <- function(formatted_data) {
+  formatted_data %>%
     group_by(gene, chemical) %>%
     summarize(average_CT = mean(CTvalue, na.rm = TRUE), .groups = "drop")
 }
 
 # Function to calculate Delta CT and RQ values
 calculate_RQ <- function(average_df, analysistype, control_to_check) {
-  bactin <- filter(average_df, gene == control_gene)
-  gene_of_interest <- filter(average_df, gene != control_gene)
-  joined <- left_join(bactin, gene_of_interest, by = 'chemical')
-  joined <- joined %>%
-    mutate(control = ifelse(chemical == control_to_check, "C", ""))
-  if (analysistype == "western") {
-    joined <- joined %>%
-      mutate(DeltaCT = round(average_CT.y / average_CT.x, digits = 2)) %>%
-      group_by(gene.y) %>%
-      mutate(RQ = round(DeltaCT / DeltaCT[control == "C"], digits = 2))
-  } else {
-    joined <- joined %>%
-      mutate(DeltaCT = round(average_CT.y - average_CT.x, digits = 2)) %>%
-      group_by(gene.y) %>%
-      mutate(
-        control_DeltaCT = ifelse(any(control == "C"), DeltaCT[control == "C"], NA),
-        DDCT = round(DeltaCT - control_DeltaCT, digits = 2),
-        RQ = round(2^(-DDCT), digits = 2)
-      ) %>%
-      ungroup()
-  }
-  rename(joined, gene = gene.y)
+  # Get control gene data - one value per chemical
+  control_gene_data <- average_df %>%
+    filter(gene == control_gene) %>%
+    dplyr::select(chemical, average_CT) %>%
+    rename(control_CT = average_CT)
+  
+  # Calculate Delta CT for all experimental genes
+  deltaCT_df <- average_df %>%
+    filter(gene != control_gene) %>%
+    # Join with control gene values by chemical``
+    left_join(control_gene_data, by = "chemical") %>%
+    # Calculate DeltaCT (experimental - control)
+    mutate(DeltaCT = average_CT - control_CT)
+  
+  # Calculate DDCT and RQ
+  ddct_df <- deltaCT_df %>%
+    group_by(gene) %>%
+    mutate(
+      control_deltaCT = DeltaCT[chemical == control_to_check],
+      DDCT = DeltaCT - control_deltaCT
+    ) %>%
+    #select(-control_deltaCT) %>%
+    ungroup()
+  
+  rq_df <- ddct_df %>%
+    mutate(RQ = 2^(-DDCT))
+  
+  return(rq_df)
 }
 
-# Function to process each replicate and update the results dataframe
-process_replicate <- function(rep, analysistype, control_to_check) {
-  plates_in_rep <- list.dirs(rep, recursive = FALSE)
-  rep_result_df <- data.frame("chemical" = character(0), "gene" = character(0), "RQ" = numeric(0))
-  for (plate in plates_in_rep) {
-    platesoutput <- parse_plate_files(plate)
-    average_df <- calculate_average_CT(platesoutput)
-    joined <- calculate_RQ(average_df, analysistype, control_to_check)
-    rep_result_df <- rbind(rep_result_df, joined[, c("chemical", "gene", "DeltaCT", "RQ")])
-  }
-  rep_result_df %>%
-    group_by(chemical, gene) %>%
-    summarize(RQ = mean(RQ, na.rm = TRUE), DeltaCT = mean(DeltaCT, na.rm = TRUE), .groups = "drop")
-}
-
-# Main loop to iterate over replicates
-process_all_replicates <- function(reps_dir, analysistype, control_to_check) {
+# Function to process all replicates from formatted data
+process_all_replicates <- function(formatted_data, analysistype, control_to_check) {
   CTdf <- data.frame()
+  
+  # Get unique rep numbers
+  reps <- unique(formatted_data$rep)
   rep_num <- 0
-  rep_folders <- list.dirs(reps_dir, recursive = FALSE)
-  for (rep in rep_folders) {
-    print(rep)
+  
+  #cat("Starting process_all_replicates function\n")
+  #cat("Found reps:", paste(reps, collapse = ", "), "\n")
+  
+  for (current_rep in reps) {
+    #cat("\nProcessing rep:", current_rep, "\n")
     rep_num <- rep_num + 1
-    rep_result_df <- process_replicate(rep, analysistype, control_to_check)
+    
+    # Filter data for current rep
+    rep_data <- formatted_data[formatted_data$rep == current_rep, ]
+    #cat("\nRep data:\n")
+    #print(rep_data)
+    
+    
+    # Calculate average CT and RQ for this rep
+    average_df <- calculate_average_CT(rep_data)
+    #cat("average_df:\n")
+    #print(average_df)
+    rep_result_df <- calculate_RQ(average_df, analysistype, control_to_check)
+    rep_result_df <- rep_result_df[, c("chemical", "gene", "DeltaCT", "RQ")]
+    #message("\nProcessed results for rep:")
+    #print(rep_result_df)
     
     if (nrow(CTdf) == 0) {
       CTdf <- bind_rows(CTdf, rep_result_df)
@@ -163,13 +138,12 @@ process_all_replicates <- function(reps_dir, analysistype, control_to_check) {
         rep_result_df <- anti_join(rep_result_df, nonmatching, by = c("chemical", "gene"))
       }
       
-      CTdf<- left_join(CTdf, rep_result_df, by= c("chemical", "gene"))
-      columns_to_merge <- grep(paste0("^",RQ_rep), names(CTdf), value = TRUE)
-      columns_to_merge_DeltaCT <- grep(paste0("^",DeltaCT_rep), names(CTdf), value = TRUE)
-      # Merge selected columns into a new column
-      # Remove the original columns if needed
-      if(length(columns_to_merge)>1){ 
-        RQ_toadd<- coalesce(!!!c(CTdf[columns_to_merge]))
+      CTdf <- left_join(CTdf, rep_result_df, by = c("chemical", "gene"))
+      columns_to_merge <- grep(paste0("^", RQ_rep), names(CTdf), value = TRUE)
+      columns_to_merge_DeltaCT <- grep(paste0("^", DeltaCT_rep), names(CTdf), value = TRUE)
+      
+      if(length(columns_to_merge) > 1) { 
+        RQ_toadd <- coalesce(!!!c(CTdf[columns_to_merge]))
         DeltaCT_toadd <- coalesce(!!!c(CTdf[columns_to_merge_DeltaCT]))
         RQ_tobind <- data.frame(value = RQ_toadd)
         DeltaCT_tobind <- data.frame(value = DeltaCT_toadd)
@@ -177,15 +151,17 @@ process_all_replicates <- function(reps_dir, analysistype, control_to_check) {
         colnames(DeltaCT_tobind) <- DeltaCT_rep
         CTdf <- CTdf[, !names(CTdf) %in% columns_to_merge]
         CTdf <- CTdf[, !names(CTdf) %in% columns_to_merge_DeltaCT]
-        CTdf<-bind_cols(CTdf,RQ_tobind) 
-        CTdf<-bind_cols(CTdf,DeltaCT_tobind)
+        CTdf <- bind_cols(CTdf, RQ_tobind) 
+        CTdf <- bind_cols(CTdf, DeltaCT_tobind)
       }
-
-      
+      #message("\nCurrent CTdf:")
+      #message(paste(capture.output(CTdf), collapse = "\n"))
     }
   }
   
-  CTdf
+  #message("\nFinal CTdf:")
+  #message(paste(capture.output(CTdf), collapse = "\n"))
+  return(CTdf)
 }
 
 # Helper function to perform outlier test and set outliers to NA
@@ -232,7 +208,7 @@ calculate_sem <- function(df, stats_prefix) {
   # Select columns that match the stats_prefix and ensure they are numeric
   selected_columns <- df[, grepl(stats_prefix, names(df))]
   
-  # Convert selected columns to numeric if they aren't already
+  # Convert selected_columns to numeric if they aren't already
   selected_columns <- data.frame(lapply(selected_columns, as.numeric))
   
   # Calculate average RQ (row means)
@@ -285,7 +261,7 @@ adjust_labels <- function(df, analysistype, gene_or_protein_label) {
   }
   names(df)[names(df) == "gene"] <- gene_or_protein_label
   df[[gene_or_protein_label]] <- tolower(df[[gene_or_protein_label]])
-  df$graphing_sort <- paste(df$chemicalgroup, df[[gene_or_protein_label]], sep = "_")
+  df$graphing_sort <- paste(df$chemicalgroup, df[[gene_or_protein_label]])
   df
 }
 
@@ -315,8 +291,7 @@ calculate_pvalues <- function(CTdf, stats_on, control_to_check) {
       for (gene in unique(CTdf$gene)) {
         print(chemical)
         print(gene)
-        x<-chemical
-        z<-gene
+
         subset_df <- CTdf[CTdf$chemicalgroup == chemical & CTdf$gene == gene, ]
         control_subset <- CTdf[CTdf$chemicalgroup == control_to_check & CTdf$gene == gene, ]
         #dont do stats on control or chemicals with only one rep 
@@ -365,206 +340,201 @@ calculate_pvalues <- function(CTdf, stats_on, control_to_check) {
      
           check_assumptions <- function(model, model_type) {
             failed_tests <- c()
-            # 1. Normality of residuals for Linear Models (LM) and Mixed Effects Models
-            if (model_type == "LM" || model_type == "MixedEffects") {
+            
+            if (model_type == "Mixed Effects Model") {
+              # 1. Normality of residuals
+              model_resid <- residuals(model, type = "pearson")
+              shapiro_test <- shapiro.test(model_resid)
+              if (shapiro_test$p.value < 0.05) {
+                failed_tests <- c(failed_tests, "Normality of residuals")
+              }
+              
+              # 2. Homogeneity of variance (homoscedasticity)
+              fitted_vals <- fitted(model)
+              groups <- cut(fitted_vals, breaks = 3)
+              levene_result <- car::leveneTest(model_resid ~ groups)
+              if (levene_result$`Pr(>F)`[1] < 0.05) {
+                failed_tests <- c(failed_tests, "Homoscedasticity")
+              }
+              
+              # 3. Linearity - check if residuals have non-linear patterns
+              cor_test <- cor.test(fitted_vals, model_resid)
+              if (cor_test$p.value < 0.05) {
+                failed_tests <- c(failed_tests, "Linearity")
+              }
+              
+              # 4. Random effects normality
+              rand_effects <- ranef(model)[[1]]  # Extract random effects
+              rand_shapiro <- shapiro.test(as.vector(rand_effects))
+              if (rand_shapiro$p.value < 0.05) {
+                failed_tests <- c(failed_tests, "Random effects normality")
+              }
+              
+              # 5. Check for influential observations
+              influence <- influence(model, groups="Replicate")
+              cook_d <- cooks.distance(influence)
+              if (any(cook_d > 4/length(cook_d))) {  # Common threshold
+                failed_tests <- c(failed_tests, "Influential observations")
+              }
+            } else if (model_type == "LM") {
+              # Original Linear Model checks
               normality_result <- check_normality(model)
-              # Extract the p-value from the result message
               p_value <- as.numeric(gsub(".*p = ([0-9.]+).*", "\\1", normality_result))
               if (p_value < 0.05) {
                 failed_tests <- c(failed_tests, "Normality of residuals")
               }
-            }
-            
-            # 2. Normality of residuals for GLMs (using simulation)
-            if (model_type == "GLM") {
-              # Simulate residuals and check uniformity
-              simulated_residuals <- simulate_residuals(model)
-              residual_check_result <- check_residuals(simulated_residuals)
-              # Extract the p-value from the result message
-              p_value <- as.numeric(gsub(".*p = ([0-9.]+).*", "\\1", residual_check_result))
-              if (p_value < 0.05) {
-                failed_tests <- c(failed_tests, "Normality of residuals")
-              }
-            }
-            
-            # 3. Homoscedasticity (for LM/GLM/MixedEffects, use appropriate method)
-            if (model_type %in% c("LM", "MixedEffects")) {
+              
               homoscedasticity_result <- check_heteroscedasticity(model)
-              # Extract the p-value from the result message
               p_value <- as.numeric(gsub(".*p = ([0-9.]+).*", "\\1", homoscedasticity_result))
               if (p_value < 0.05) {
                 failed_tests <- c(failed_tests, "Homoscedasticity")
               }
-            }
-            
-            # For GLMs that are not Gaussian (Poisson, Gamma, etc.), use residuals for heteroscedasticity check
-            if (model_type == "GLM" && !is.null(family(model)$family) && family(model)$family != "gaussian") {
-              # For Poisson or Gamma, check residuals behavior
-              residuals <- residuals(model, type = "pearson")
-              # Use residual plots or other checks for heteroscedasticity
-              # Here, you can replace this with your method to check residuals distribution/variance.
-              if (sd(residuals) > 2) {
-                failed_tests <- c(failed_tests, "Heteroscedasticity (Poisson/Gamma)")
+              
+            } else if (model_type == "Generalized Linear Model") {
+              # Original GLM checks
+              residual_deviance <- sum(residuals(model, type = "deviance")^2)
+              df_residual <- df.residual(model)
+              if (residual_deviance/df_residual > 2) {
+                failed_tests <- c(failed_tests, "Residual deviance")
               }
-            }
-            
-            
-            # 4. Independence (Durbin-Watson for LM/GLM)
-            if (model_type %in% c("LM", "GLM", "MixedEffects")) {
-              dw_test <- durbinWatsonTest(model)
-              if (dw_test$p < 0.05) {
-                failed_tests <- c(failed_tests, "Independence of residuals (Durbin-Watson test)")
-              }
-            }
-            
-            # 5. Overdispersion (for GLM)
-            if (model_type == "GLM") {
-              residual_deviance <- sum(residuals(model)^2)
-              overdispersion_ratio <- residual_deviance / df.residual(model)
-              if (overdispersion_ratio > 1) {
-                failed_tests <- c(failed_tests, "Overdispersion")
+              
+              if (family(model)$family %in% c("poisson", "binomial")) {
+                phi <- residual_deviance/df_residual
+                if (phi > 1.5) {
+                  failed_tests <- c(failed_tests, "Overdispersion")
+                }
               }
             }
             
             if (length(failed_tests) == 0) {
-              return(TRUE)  # All assumptions passed
+              return(TRUE)
             } else {
-              return(failed_tests)  # Return the names of failed tests
+              return(failed_tests)
             }
           }
           
-          # Define model families for GLM
-          glm_families <- list(
-            "Gaussian Identity" = gaussian(link = "identity"),
-            "Binomial Logit" = binomial(link = "logit"),
-            "Poisson Log" = poisson(link = "log"),
-            "Gamma Log" = Gamma(link = "log"),
-            "Inverse Gaussian 1/mu^2" = inverse.gaussian(link = "1/mu^2")
-          )
-          
-          # Define model types, including testing all GLM families
-          #TODO: be able to choose which models you want to test out of
+          # Define all models in a single list
           models <- list(
-           # "Linear Model" = function() lm(Expression ~ Treatment, data = balanced_df),
-            "Generalized Linear Model" = function() {
-              glm_results <- list()
-              for (family_name in names(glm_families)) {
-                tryCatch({
-                  model <- glm(Expression ~ Treatment, data = balanced_df, family = glm_families[[family_name]])
-                  assumption_results <- check_assumptions(model, model_type = "GLM")
-                  if (isTRUE(assumption_results)) {
-                    glm_results[[family_name]] <- list(
-                      model = model,
-                      AIC = AIC(model)
-                    )
-                  } else {
-                    glm_results[[family_name]] <- list(
-                      model = model,
-                      AIC = NA,
-                      failed_tests = assumption_results
-                    )
-                  }
-                }, error = function(e) {
-                  message("Error fitting GLM with family ", family_name, ": ", e$message)
-                  glm_results[[family_name]] <- list(
-                    model = NULL,
-                    AIC = NA,
-                    error_message = e$message
-                  )
-                })
-              }
-              return(glm_results)
-            }#,
-            #"Mixed Effects Model" = function() lmer(Expression ~ Treatment + (1 | Treatment), data = balanced_df)
+            "Linear Model" = list(
+              fit = function() lm(Expression ~ Treatment + Replicate, data = balanced_df),
+              type = "LM"
+            ),
+            "Mixed Effects Model" = list(
+              fit = function() {
+                lmer(Expression ~ Treatment + (1|Replicate), 
+                     data = balanced_df,
+                     REML = TRUE,
+                     control = lmerControl(optimizer = "bobyqa",
+                                         optCtrl = list(maxfun = 100000),
+                                         check.nobs.vs.nlev = "ignore",
+                                         check.nobs.vs.nRE = "ignore"))
+              },
+              type = "Mixed Effects Model"
+            ),
+            "GLM Gaussian" = list(
+              fit = function() glm(Expression ~ Treatment + Replicate, 
+                                  data = balanced_df, 
+                                  family = gaussian(link = "identity")),
+              type = "Generalized Linear Model"
+            ),
+            "GLM Poisson" = list(
+              fit = function() glm(Expression ~ Treatment + Replicate, 
+                                  data = balanced_df, 
+                                  family = poisson(link = "log")),
+              type = "Generalized Linear Model"
+            ),
+            "GLM Gamma" = list(
+              fit = function() glm(Expression ~ Treatment + Replicate, 
+                                  data = balanced_df, 
+                                  family = Gamma(link = "log")),
+              type = "Generalized Linear Model"
+            ),
+            "GLM Inverse Gaussian" = list(
+              fit = function() glm(Expression ~ Treatment + Replicate, 
+                                  data = balanced_df, 
+                                  family = inverse.gaussian(link = "1/mu^2")),
+              type = "Generalized Linear Model"
+            )
           )
           
           # Function to evaluate models
+          evaluate_models <- function() {
             results <- list()
+            valid_models <- numeric()
             
             for (model_name in names(models)) {
+              cat("\nEvaluating", model_name, "...\n")
+              
               tryCatch({
-                if (model_name == "Generalized Linear Model") {
-                  glm_results <- models[[model_name]]()  # Get results for all GLM families
-                  for (family_name in names(glm_results)) {
-                    glm_family_result <- glm_results[[family_name]]
-                    model <- glm_family_result$model
-                    print(family_name)
-                    print(summary(model))
-                    
-                    if (!is.null(model) && !is.na(glm_family_result$AIC)) {
-                      results[[paste(model_name, family_name, sep = " - ")]] <- glm_family_result$AIC
-                    } else {
-                      message("Model failed assumptions or encountered error: ", family_name, " - Failed Tests: ", paste(assumption_results, collapse = ", "))
-                    }
-                  }
+                model <- models[[model_name]]$fit()
+                
+                assumption_results <- check_assumptions(model, model_type = models[[model_name]]$type)
+                
+                if (isTRUE(assumption_results)) {
+                  cat("✓ Model passed all assumptions\n")
+                  valid_models[model_name] <- AIC(model)
+                  
+                  cat("\nModel Summary:\n")
+                  print(summary(model))
+                  cat("AIC:", AIC(model), "\n")
+                  
+                  results[[model_name]] <- model
                 } else {
-                  # Fit other models
-                  model <- models[[model_name]]()
-                  assumption_results <- check_assumptions(model, model_type = ifelse(model_name == "Linear Model", "LM", "Mixed"))
-                  if (isTRUE(assumption_results)) {
-                    results[[model_name]] <- AIC(model)
-                    
-                  } else {
-                    message("Model failed assumptions: ", model_name, " - Failed Tests: ", paste(assumption_results, collapse = ", "))
-                  }
+                  cat("✗ Model failed assumptions:", paste(assumption_results, collapse = ", "), "\n")
                 }
+                
               }, error = function(e) {
-                message("Error fitting model: ", model_name, " - ", e$message)
+                cat("✗ Error fitting model:", conditionMessage(e), "\n")
               })
             }
             
-            # Determine the best model based on AIC
-            if (length(results) > 0) {
-              valid_results <- unlist(results)
-              best_model <- names(valid_results)[which.min(valid_results)]
-              cat("Best model based on AIC:", best_model, "\n")
-              browser()
-              # Extract p-values for the treatment comparison
-              if (startsWith(best_model, "Generalized Linear Model")) {
+            # Handle results
+            if (length(valid_models) > 0) {
+              # Find best model
+              best_model_name <- names(valid_models)[which.min(valid_models)]
+              best_model <- results[[best_model_name]]
               
-                family_name <- sub("Generalized Linear Model - ", "", best_model)
-                model_fit <- models[["Generalized Linear Model"]]()[[family_name]]$model
-                model_summary <- summary(model_fit)
-                # Extract p-values from the correct column for GLM (-1 to avoid storing y intercdept p value)
-                browser()
-                l<-model_summary$coefficients[-1, 4] 
-                browser()
-                CTdf$pvalue[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- model_summary$coefficients[-1, 4]  # p-values from summary
-               
-                } else if (best_model == "Linear Model") {
-                  browser()
-                model_fit <- models[["Linear Model"]]()
-                model_summary <- summary(model_fit)
-                # Extract p-values for linear models
-                CTdf$pvalue[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- model_summary$coefficients[-1, 4]  # p-values from summary
-                browser()
-                } else if (best_model == "Mixed Effects Model") {
-                  browser()
-                # Fit the mixed effects model
-                model_fit <- models[["Mixed Effects Model"]]()
-                # Use lmerTest to get p-values for the fixed effects
-                library("lmerTest")
-                model_summary <- summary(model_fit)
-                # Extract p-values for fixed effects (assuming the 5th column for p-values)
-                CTdf$pvalue[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- model_summary$coefficients[-1, 5]  # p-values for fixed effects
-                browser()
-                }
-              browser()
-              # Store the best model name for later
-              CTdf$model_name[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- best_model
+              # Extract p-values based on model type
+              if (best_model_name == "Mixed Effects Model") {
+                library(lmerTest)
+                p_values <- summary(best_model)$coefficients[-1, "Pr(>|t|)"]
+              } else {
+                p_values <- summary(best_model)$coefficients[-1, 4]
+              }
+              
+              cat("\nBest model:", best_model_name, "\n")
+              
+              return(list(
+                model_name = best_model_name,
+                p_values = p_values
+              ))
             } else {
-              cat("All models failed assumption tests or encountered errors.\n")
+              cat("\nNo valid models found.\n")
+              return(NULL)
             }
+          }
+          
+          # Run the evaluation and store results
+          model_results <- evaluate_models()
+          
+          # Store results in CTdf if a valid model was found
+          if (!is.null(model_results)) {
+            CTdf$pvalue[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- model_results$p_values
+            CTdf$model_name[CTdf$gene == gene & CTdf$chemicalgroup == chemical] <- model_results$model_name
+          }
         }
       }
     }
   }
-  browser()
+  CTdf$pvalue <- as.numeric(CTdf$pvalue)
   CTdf$pvalue <- round(CTdf$pvalue, 4)  
   CTdf$pvalue <- format(CTdf$pvalue, scientific = FALSE)
   
   get_sigcode <- function(pvalue) {
-    if (is.na(pvalue)) {
+    # Debugging output
+    pvalue <- as.numeric(pvalue)
+    # Check if pvalue is NA or a character representation of NA
+    if (is.na(pvalue) || pvalue == "" || pvalue == "NA" || pvalue == "NaN") {
       return(" ")  # Return a default significance code for missing values
     } else if (pvalue < 0.001) {
       return("***")
@@ -588,22 +558,24 @@ calculate_pvalues <- function(CTdf, stats_on, control_to_check) {
 # Main function to process data
 process_CTdf <- function(CTdf, stats_on, control_to_check, analysistype, unit, gene_or_protein_label) {
   CTdf <- CTdf[!duplicated(CTdf[, c("chemical", "gene")]), ]
-  CTdf <- apply_outlier_test(CTdf, stats_on)
+  #CTdf <- apply_outlier_test(CTdf, stats_on)
   CTdf <- calculate_sem(CTdf, "^RQ")
-  CTdf <- add_concentration_and_groups(CTdf)
-  browser()
+  CTdf <- add_concentration_and_groups(CTdf)  
   CTdf <- calculate_pvalues(CTdf, stats_on, control_to_check)
   CTdf <- adjust_labels(CTdf, analysistype, gene_or_protein_label)
-  
   # Adjust concentration display and move columns
   #CTdf$chemical <- paste0(format(CTdf$concentration, nsmall = 1), unit, " ", as.character(CTdf$chemicalgroup), " ", CTdf[[gene_or_protein_label]])
   #CTdf <- CTdf[, c("chemical", "concentration", "chemicalgroup", setdiff(names(CTdf), c("chemical", "concentration", "chemicalgroup")))]
   
   CTdf
 }
+#formatted_data <- read.csv("/home/ssyeddan/storage/Cursor_Atlas_Lab/Atlas_Lab_app/qPCR_formatted_data_20250108_115413.csv")
+#formatted_data$chemical <- tolower(gsub(" ", "", formatted_data$chemical))
+#final_df <- process_all_replicates(formatted_data, analysis_type, control_to_check)
+#head(final_df)
 
-# Run processing
-final_df <- process_all_replicates(rep_files_dir, analysis_type, control_to_check)
-CTdf <- process_CTdf(final_df, stats_on = "RQ", control_to_check = control_to_check, analysistype = analysis_type, unit = "uM", gene_or_protein_label = "gene")
+#CTdf <- process_CTdf(final_df, stats_on = "RQ", control_to_check = control_to_check, 
+#                    analysistype = analysis_type, unit = "uM", 
+#                    gene_or_protein_label = "gene")
+#write.table(CTdf, paste0("~/storage/Atlas_lab_app/Columbus_Analysis/", "resall.txt"), sep = "\t", row.names = FALSE)
 
-write.table(CTdf, paste0("~/storage/Atlas_lab_app/Columbus_Analysis/", "resall.txt"), sep = "\t", row.names = FALSE)
