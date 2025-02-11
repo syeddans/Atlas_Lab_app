@@ -7,8 +7,8 @@ params:
   control_gene: "b-actin"
   control_to_check: "mir+vehcon"
   analysis_type: "qPCR" #qPCR or western
-  chemicalsymbols: c("phe","9p" ,"bap")
-  chemicalnames: c("Phenanthrene","9-ChloroPhenanthrene","BaP")
+#  chemicalsymbols: c("phe","9p" ,"bap")
+#  chemicalnames: c("Phenanthrene","9-ChloroPhenanthrene","BaP")
   stats_on: "RQ"  #RQ or DeltaCT
   unit: "uM"
 editor_options:
@@ -30,8 +30,8 @@ output_dir <- params$output_dir
 control_gene <- params$control_gene
 control_to_check <- params$control_to_check
 analysis_type <- params$analysis_type
-chemicalsymbols <- params$chemicalsymbols
-chemicalnames <- params$chemicalnames
+#chemicalsymbols <- params$chemicalsymbols
+#chemicalnames <- params$chemicalnames
 stats_on <- params$stats_on
 unit <- params$unit
 ```
@@ -39,24 +39,32 @@ unit <- params$unit
 ```{r run script, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
 # Source the script and run analysis
 
-sink(file.path(output_dir, "analysis_log.txt"))
 output <- capture.output(source("qPCR_western_Analysis/qPCR analysis Script_updated.R", local = TRUE))
 formatted_data <- read.csv(formatted_data_path)
 formatted_data$chemical <- tolower(gsub(" ", "", formatted_data$chemical))
-final_df <- process_all_replicates(formatted_data, analysis_type, control_to_check)
+final_df <- process_all_replicates(formatted_data, analysis_type, control_gene, control_to_check)
+
 CTdf <- process_CTdf(final_df, stats_on = "RQ", control_to_check = control_to_check, 
                     analysistype = analysis_type, unit = "uM", 
                     gene_or_protein_label = "gene")
+
+
+# Round numeric columns in final_df to 2 decimal places
+numeric_cols <- sapply(final_df, is.numeric)
+final_df[numeric_cols] <- round(final_df[numeric_cols], 2)
+
+# Round numeric columns in CTdf to 2 decimal places 
+numeric_cols <- sapply(CTdf, is.numeric)
+CTdf[numeric_cols] <- round(CTdf[numeric_cols], 2)
 
 # Save formatted data
 write.csv(formatted_data, file.path(output_dir, "input_data_formatted.csv"), row.names = FALSE)
 
 # Save averaged data
-write.csv(final_df, file.path(output_dir, "input_data_averaged.csv"), row.names = FALSE)
+write.csv(final_df, file.path(output_dir, "RQs.csv"), row.names = FALSE)
 
 # Save processed data
-write.csv(CTdf, file.path(output_dir, "data_processed.csv"), row.names = FALSE)
-sink()
+write.csv(CTdf, file.path(output_dir, "Final_results_with_stats.csv"), row.names = FALSE)
 
 ```
 

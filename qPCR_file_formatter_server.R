@@ -22,31 +22,67 @@ qpcr_file_formatter_server <- function(input, output, session) {
     }
   })
 
-  # Function to process single set of files
-  process_qpcr_files <- function(wellmap_file, genemap_file, ct_file, repmap_file) {
-    # Read the files
-    wellmap <- read.csv(wellmap_file, header = FALSE)
-    genemap <- read.csv(genemap_file, header = FALSE)
-    ctmap <- read.csv(ct_file, header = FALSE)
-    repmap <- read.csv(repmap_file, header = FALSE)  # New replicate map file
+  # Function to process uploaded files and format data
+  process_qpcr_files <- function(
+    wellmap_file,
+    genemap_file,
+    ct_file,
+    repmap_file
+  ) {
+    # Read the files - handle both direct file paths and uploaded file objects
+    wellmap <- read.csv(if(is.character(wellmap_file)) wellmap_file else wellmap_file$datapath, header = FALSE)
+    genemap <- read.csv(if(is.character(genemap_file)) genemap_file else genemap_file$datapath, header = FALSE)
+    ctmap <- read.csv(if(is.character(ct_file)) ct_file else ct_file$datapath, header = FALSE)
+    repmap <- read.csv(if(is.character(repmap_file)) repmap_file else repmap_file$datapath, header = FALSE)
     
     # Create grid of row and column indices
     rows <- 2:nrow(wellmap)
     cols <- 2:ncol(wellmap)
     grid <- expand.grid(row = rows, col = cols)
     
-    # Vectorized operations using dplyr
-    formatted_data <- dplyr::tibble(
-      well = paste0(wellmap[grid$row, 1], wellmap[1, grid$col]),
-      chemical = as.character(wellmap[cbind(grid$row, grid$col)]),
-      gene = as.character(genemap[cbind(grid$row, grid$col)]),
-      CTvalue = as.numeric(ctmap[cbind(grid$row, grid$col)]),
-      replicate = as.numeric(repmap[cbind(grid$row, grid$col)])  # Use replicate map
-    ) %>%
-    dplyr::filter(!is.na(CTvalue)) %>%
-    dplyr::mutate(chemical = tolower(gsub(" ", "", chemical)))
-    
-    return(formatted_data)
+    # Validate dimensions and create formatted data
+    tryCatch({
+      # Check for out of bounds indices
+      if (any(grid$row > nrow(wellmap)) || any(grid$col > ncol(wellmap))) {
+        stop("Grid indices exceed wellmap dimensions")
+      }
+      if (any(grid$row > nrow(genemap)) || any(grid$col > ncol(genemap))) {
+        stop("Grid indices exceed genemap dimensions")
+      }
+      if (any(grid$row > nrow(ctmap)) || any(grid$col > ncol(ctmap))) {
+        stop("Grid indices exceed ctmap dimensions")
+      }
+      if (any(grid$row > nrow(repmap)) || any(grid$col > ncol(repmap))) {
+        stop("Grid indices exceed repmap dimensions")
+      }
+
+      formatted_data <- dplyr::tibble(
+        well = paste0(wellmap[grid$row, 1], wellmap[1, grid$col]),
+        chemical = as.character(wellmap[cbind(grid$row, grid$col)]),
+        gene = as.character(genemap[cbind(grid$row, grid$col)]),
+        CTvalue = as.numeric(ctmap[cbind(grid$row, grid$col)]),
+        replicate = as.numeric(repmap[cbind(grid$row, grid$col)])
+      ) %>%
+      dplyr::filter(!is.na(CTvalue)) %>%
+      dplyr::mutate(chemical = tolower(gsub(" ", "", chemical)))
+      
+      return(formatted_data)
+      
+    }, error = function(e) {
+      # Only print debugging info when error occurs
+      cat("\nError in data formatting. Debugging information:\n")
+      cat("Error message:", conditionMessage(e), "\n")
+      cat("\nDimensions of maps:\n")
+      cat("wellmap:", dim(wellmap), "\n")
+      cat("genemap:", dim(genemap), "\n")
+      cat("ctmap:", dim(ctmap), "\n")
+      cat("repmap:", dim(repmap), "\n")
+      cat("\nGrid dimensions:\n")
+      cat("row range:", range(grid$row), "\n")
+      cat("col range:", range(grid$col), "\n")
+      
+      return(NULL)
+    })
   }
 
   # Function to process folder of folders using parallel processing
@@ -72,29 +108,15 @@ qpcr_file_formatter_server <- function(input, output, session) {
     main_folders <- list.dirs(qpcr_folder_dir, full.names = TRUE, recursive = FALSE)
     main_folders <- main_folders[!grepl("__MACOSX", main_folders)]
     main_folder <- main_folders[1]  # Take the first non-MACOSX folder
-    
-    message("\nFound main folder:", basename(main_folder))
-    
-    # Find all rep folders within the main folder
-    rep_folders <- list.dirs(main_folder, full.names = TRUE, recursive = FALSE)
-    rep_folders <- rep_folders[!grepl("__MACOSX", rep_folders)]
-    
-    if (length(rep_folders) == 0) {
-      stop("No valid rep folders found in the uploaded zip file")
-    }
-    
-    message("\nFound rep folders:")
-    message(paste(basename(rep_folders), collapse = "\n"))
-    
     # Process each rep folder
-    all_results <- lapply(rep_folders, function(rep_folder) {
-      message("\nProcessing folder: ", basename(rep_folder))
+    all_results <- lapply(main_folder, function(main_folder) {
+      message("\nProcessing folder: ", basename(main_folder))
       
       # Get all plate directories within this rep
-      plate_dirs <- list.dirs(rep_folder, full.names = TRUE, recursive = FALSE)
+      plate_dirs <- list.dirs(main_folder, full.names = TRUE, recursive = FALSE)
       
       if (length(plate_dirs) == 0) {
-        message("No plate directories found in folder ", basename(rep_folder))
+        message("No plate directories found in folder ", basename(main_folder))
         return(NULL)
       }
       
@@ -108,7 +130,7 @@ qpcr_file_formatter_server <- function(input, output, session) {
                                   full.names = TRUE, ignore.case = TRUE)[1]
         ct_file <- list.files(plate_dir, pattern = ".*CTmap\\.csv$", 
                              full.names = TRUE, ignore.case = TRUE)[1]
-        repmap_file <- list.files(plate_dir, pattern = ".*repmap\\.csv$", 
+        repmap_file <- list.files(plate_dir, pattern = ".*(-repmap|-replicate)\\.csv$", 
                                  full.names = TRUE, ignore.case = TRUE)[1]  # New replicate map file
         
         if (is.na(wellmap_file) || is.na(genemap_file) || is.na(ct_file) || is.na(repmap_file)) {
@@ -138,7 +160,7 @@ qpcr_file_formatter_server <- function(input, output, session) {
       # Remove NULL results and combine plates
       valid_results <- Filter(Negate(is.null), plate_results)
       if (length(valid_results) == 0) {
-        message("No valid results for folder ", basename(rep_folder))
+        message("No valid results for folder ", basename(main_folder))
         return(NULL)
       }
       
@@ -148,7 +170,7 @@ qpcr_file_formatter_server <- function(input, output, session) {
     # Remove NULL results and combine all reps
     valid_results <- Filter(Negate(is.null), all_results)
     if (length(valid_results) == 0) {
-      stop("No valid results found in any rep folder")
+      stop("No valid results found in any plate folder")
     }
     
     # Combine all results
@@ -161,7 +183,9 @@ qpcr_file_formatter_server <- function(input, output, session) {
     # Clean up
     unlink(qpcr_folder_dir, recursive = TRUE)
     message("Processing complete. Found ", nrow(all_formatted_data), " rows of data")
-    
+    # Convert character columns to lowercase and remove whitespace
+    all_formatted_data <- all_formatted_data %>%
+      mutate(across(where(is.character), ~tolower(gsub("\\s+", "", .))))
     return(all_formatted_data)
   }
 
@@ -174,16 +198,36 @@ qpcr_file_formatter_server <- function(input, output, session) {
         formatted_data <- process_qpcr_folder(input$qpcr_folder$datapath)
       } else {
         formatted_data <- process_qpcr_files(
-          input$wellmap_file$datapath,
-          input$genemap_file$datapath,
-          input$ct_file$datapath,
-          input$repmap_file$datapath  # Keep repmap_file input for individual file processing
+          input$wellmap_file,
+          input$genemap_file,
+          input$ct_file,
+          input$repmap_file  # Keep repmap_file input for individual file processing
         )
       }
 
       # Save to temp directory
       output_file <- file.path(temp_dir, "formatted_qpcr_data.csv")
       write.csv(formatted_data, file = output_file, row.names = FALSE)
+      # Find rows with any NA values
+      NArows <- formatted_data[apply(formatted_data, 1, function(x) any(is.na(x))), ]
+      
+      if(nrow(NArows) > 0) {
+        # Print to console
+        message("Rows containing NA values:")
+        print.data.frame(NArows, row.names = TRUE, max = NULL)
+        
+        # Create notification message
+        na_message <- paste0(
+          " ", nrow(NArows), " missing values found in the data inputted.\n",
+          "Rows: ", paste(capture.output(print.data.frame(NArows, row.names = TRUE, max = NULL)), collapse="\n")
+        )
+        
+        # Show notification
+        shiny::showNotification(na_message, type = "warning", duration = NULL)
+      } else {
+        message("No NA values found in the data")
+        shiny::showNotification("No NA values found in the data", type = "message")
+      }
 
       output$download_section <- shiny::renderUI({
         shiny::downloadButton("download_formatted", "Download Formatted Data")

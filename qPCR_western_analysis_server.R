@@ -36,7 +36,8 @@ qpcr_western_analysis_server <- function(input, output, session) {
     
     # Copy file and verify
     file.copy(input$qPCR_western_files$datapath, files_path, overwrite = TRUE)
- 
+  
+    print(input$Control_name_input)
     rmarkdown::render(
       "qPCR_western_Analysis/NoShinyqPCR results.Rmd",
       params = list(
@@ -45,8 +46,8 @@ qpcr_western_analysis_server <- function(input, output, session) {
         control_gene = tolower(gsub("\\s+", "", input$Control_gene_input)),
         control_to_check = tolower(gsub("\\s+", "", input$Control_name_input)),
         analysis_type = input$qPCR_or_Western,
-        chemicalsymbols = strsplit(input$chemical_symbols, ",")[[1]],
-        chemicalnames = strsplit(input$chemical_name_full, ",")[[1]],
+        #chemicalsymbols = strsplit(input$chemical_symbols, ",")[[1]],
+        #chemicalnames = strsplit(input$chemical_name_full, ",")[[1]],
         stats_on = input$RQ_or_DDCT
       ),
       quiet = FALSE,
@@ -72,8 +73,10 @@ qpcr_western_analysis_server <- function(input, output, session) {
         file.path(temp_dir, "NoShinyqPCR-results.html"),
         file.path(temp_dir, "analysis_log.txt"),
         file.path(temp_dir, "input_data_formatted.csv"),
-        file.path(temp_dir, "input_data_averaged.csv"),
-        file.path(temp_dir, "data_processed.csv")
+        file.path(temp_dir, "RQs.csv"),
+        file.path(temp_dir, "Final_results_with_stats.csv"),
+        file.path(temp_dir, "Data_averaged.csv"),
+        file.path(temp_dir, "Calculated_RQ_by_rep.csv")
       ))
       file.copy(zip_file, file)
       unlink(zip_file)  # Clean up the temporary zip file
